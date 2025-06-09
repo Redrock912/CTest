@@ -27,3 +27,23 @@ python hello.py
 ```
 
 The script prints a greeting message.
+
+## Tools
+
+### Weather prediction tool
+
+Fetch past 20 days of weather information and a 7 day forecast using the [Open-Meteo](https://open-meteo.com/) API.
+
+Example:
+
+```bash
+python tools/weather.py 52.52 13.41
+```
+
+### Template tool
+
+Placeholder script for future functionality:
+
+```bash
+python tools/template_tool.py
+```
