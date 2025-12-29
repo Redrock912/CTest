@@ -99,9 +99,13 @@ class MemoListNotifier extends AsyncNotifier<List<Memo>> {
     // Auto-Export Logic
     Memo memo = parsed.memo;
     if (parsed.memo.hasValidRange) {
-       final eventId = await addToCalendar(parsed.memo);
-       if (eventId != null) {
-         memo = memo.copyWith(calendarEventId: eventId);
+       try {
+         final eventId = await addToCalendar(parsed.memo);
+         if (eventId != null) {
+           memo = memo.copyWith(calendarEventId: eventId);
+         }
+       } catch (_) {
+         // Ignore calendar errors to ensure local save succeeds
        }
     }
 

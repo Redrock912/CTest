@@ -1,12 +1,17 @@
 import 'package:device_calendar/device_calendar.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
 
 import '../models/memo.dart';
 
 class CalendarService {
   final DeviceCalendarPlugin _deviceCalendarPlugin = DeviceCalendarPlugin();
+
+  CalendarService() {
+    tz.initializeTimeZones();
+  }
 
   Future<bool> requestPermission() async {
     // Check general calendar permissions first
