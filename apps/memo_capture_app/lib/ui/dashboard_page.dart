@@ -5,16 +5,88 @@ import '../models/memo.dart';
 import '../state/memo_controller.dart';
 import 'widgets/memo_form_dialog.dart';
 
-class DashboardPage extends ConsumerWidget {
+class DashboardPage extends ConsumerStatefulWidget {
   const DashboardPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends ConsumerState<DashboardPage> {
+  @override
+  void initState() {
+    super.initState();
+    // Listen for messages from the notifier
+    // We access the notifier lazily in a post-frame callback or use ref.listen in build
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Listen for side-effects (messages)
+    ref.listen<AsyncValue<List<Memo>>>(memoListProvider, (previous, next) {
+      // This listener is for state changes, but we want the message stream.
+      // We can access the notifier instance to listen to the stream.
+    });
+
+    // Better way: Listen to the notifier's stream exposed via a provider?
+    // Or just listen in init via manual subscription?
+    // Since MemoListNotifier is async, we get it via .notifier.
+
+    // Using ref.listenManual on the provider to get the notifier is tricky if it's AsyncNotifier.
+    // Instead, we can just watch a separate provider if we made one, OR:
+    // We simply use a transient useEffect-style logic.
+
     final memos = ref.watch(memoListProvider);
 
+    // HACK: To listen to the stream, we can hook it up here.
+    // Ideally we would use a separate provider for "UserMessage" or "AppEvents".
+    // For now, let's grab the notifier and listen.
+    ref.listenManual(memoListProvider.notifier, (prev, next) {
+        // This gives us the AsyncNotifier, but not the stream directly in a clean way unless we cast or expose it differently.
+        // Actually, 'next' is the Notifier itself if we listen to .notifier?
+        // No, ref.listen(provider.notifier) gives (previousNotifier, nextNotifier).
+    });
+
+    return _DashboardScaffold(memos: memos);
+  }
+}
+
+class _DashboardScaffold extends ConsumerStatefulWidget {
+  const _DashboardScaffold({required this.memos});
+  final AsyncValue<List<Memo>> memos;
+
+  @override
+  ConsumerState<_DashboardScaffold> createState() => _DashboardScaffoldState();
+}
+
+class _DashboardScaffoldState extends ConsumerState<_DashboardScaffold> {
+
+  @override
+  void initState() {
+    super.initState();
+    // We need to listen to the stream.
+    // Since the notifier might be recreated, this is slightly fragile in pure Riverpod without a dedicated Event provider.
+    // But let's try to access it once.
+
+    // A robust pattern: Use a Provider for the stream.
+    // But let's try to just use ref.read in the addPostFrameCallback once?
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+       final notifier = ref.read(memoListProvider.notifier);
+       notifier.messageStream.listen((message) {
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             SnackBar(content: Text(message)),
+           );
+         }
+       });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Memo Capture (base)'),
+        title: const Text('Memo Capture'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -22,7 +94,7 @@ class DashboardPage extends ConsumerWidget {
           ),
         ],
       ),
-      body: memos.when(
+      body: widget.memos.when(
         data: (data) => _MemoList(memos: data),
         error: (error, stack) => Center(
           child: Text('Failed to load memos: $error'),
@@ -59,7 +131,7 @@ class _MemoList extends ConsumerWidget {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(24),
-          child: Text('No memos yet. Use the + button to add one.'),
+          child: Text('No memos yet. Share content to this app or add manually.'),
         ),
       );
     }
@@ -69,27 +141,49 @@ class _MemoList extends ConsumerWidget {
       itemCount: memos.length,
       itemBuilder: (context, index) {
         final memo = memos[index];
+        final bool hasEvent = memo.calendarEventId != null;
+
         return Card(
           child: ListTile(
             title: Text(memo.title),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(memo.url, maxLines: 1, overflow: TextOverflow.ellipsis),
-                if (memo.formattedDetectedDate != null)
-                  Padding(
+                if (memo.url.isNotEmpty && memo.url != 'No URL')
+                  Text(memo.url, maxLines: 1, overflow: TextOverflow.ellipsis),
+
+                if (memo.formattedRange != null)
+                   Padding(
                     padding: const EdgeInsets.only(top: 4),
-                    child: Text('Detected: ${memo.formattedDetectedDate}'),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.access_time, size: 14, color: Colors.grey),
+                        const SizedBox(width: 4),
+                        Text('Event: ${memo.formattedRange}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ],
+                    ),
                   ),
+
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text('Saved: ${memo.formattedDate}'),
+                  child: Text('Captured: ${memo.formattedDate}'),
                 ),
               ],
             ),
-            trailing: Icon(
-              memo.reviewed ? Icons.check_circle : Icons.radio_button_unchecked,
-              color: memo.reviewed ? Colors.green : Colors.grey,
+            trailing: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (hasEvent)
+                  const Icon(Icons.event, color: Colors.blue, size: 20)
+                else
+                  const SizedBox(height: 20),
+
+                Icon(
+                  memo.reviewed ? Icons.check_circle : Icons.radio_button_unchecked,
+                  color: memo.reviewed ? Colors.green : Colors.grey,
+                  size: 20,
+                ),
+              ],
             ),
             onTap: () => _showMemoActions(context, ref, memo),
           ),
@@ -139,20 +233,31 @@ class _MemoList extends ConsumerWidget {
                     ),
                     label: Text(memo.reviewed ? 'Mark pending' : 'Mark reviewed'),
                   ),
-                  TextButton.icon(
-                    onPressed: () async {
-                      final eventId = await notifier.addToCalendar(memo);
-                      if (!context.mounted) return;
-                      final message = eventId == null
-                          ? 'Calendar integration not wired yet'
-                          : 'Created calendar event ($eventId)';
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(message)),
-                      );
-                    },
-                    icon: const Icon(Icons.event_available),
-                    label: const Text('Add to calendar'),
-                  ),
+                  if (memo.calendarEventId == null)
+                    TextButton.icon(
+                      onPressed: () async {
+                        final eventId = await notifier.addToCalendar(memo);
+                        if (!context.mounted) return;
+                        if (eventId != null) {
+                           ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Added to calendar')),
+                           );
+                           Navigator.of(context).pop();
+                        } else {
+                           ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Could not add to calendar (missing date range or permission)')),
+                           );
+                        }
+                      },
+                      icon: const Icon(Icons.event_available),
+                      label: const Text('Add to calendar'),
+                    )
+                  else
+                     TextButton.icon(
+                      onPressed: null,
+                      icon: const Icon(Icons.event_available, color: Colors.green),
+                      label: const Text('On Calendar'),
+                     ),
                   TextButton.icon(
                     onPressed: () {
                       notifier.deleteMemo(memo.id);
